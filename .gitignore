@@ -1,0 +1,53 @@
+﻿# ─── Python ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.so
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# ─── Environment & Secrets ──────────────────────────────
+# .env holds real secrets — NEVER commit it.
+# We commit .env.example as a template instead.
+.env
+.env.local
+*.pem
+*.key
+
+# ─── Databases (local SQLite files) ─────────────────────
+# The schema lives in code; the .db file is disposable local data.
+*.db
+*.sqlite
+*.sqlite3
+
+# ─── Testing & Coverage ─────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ─── Linting / Type checking ────────────────────────────
+.ruff_cache/
+.mypy_cache/
+
+# ─── IDE ────────────────────────────────────────────────
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ─── Logs ───────────────────────────────────────────────
+*.log
+logs/
