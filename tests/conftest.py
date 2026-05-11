@@ -9,6 +9,8 @@ Setup philosophy:
   - Tests use an in-memory SQLite database (separate from gateway.db),
     so the dev database is never touched.
   - The rate limiter is reset between tests so they don't interfere.
+  - The FastAPI lifespan is manually triggered so app.state.http_client
+    gets set up — httpx.ASGITransport doesn't run lifespan automatically.
   - The httpx client talks to the FastAPI app directly via ASGI
     transport — no actual network sockets, no port conflicts, fast.
 """
@@ -64,7 +66,7 @@ async def test_session_factory(test_engine):
     )
 
 
-# ─── App fixture with overridden dependencies ──────────────
+# ─── App fixture with overridden dependencies + lifespan ──
 
 @pytest_asyncio.fixture(scope="function")
 async def app(test_engine, test_session_factory, monkeypatch):
@@ -79,6 +81,9 @@ async def app(test_engine, test_session_factory, monkeypatch):
       - The log store singleton → a fresh SqliteLogStore (so each test
         starts with an empty log table — and writes go to the in-memory
         DB, not gateway.db).
+
+    Then we MANUALLY run the FastAPI lifespan so app.state.http_client
+    gets created. httpx.ASGITransport doesn't run lifespan automatically.
     """
     import app.infra.database as db_module
 
@@ -90,12 +95,16 @@ async def app(test_engine, test_session_factory, monkeypatch):
     monkeypatch.setattr(dependencies, "_rate_limiter", fresh_limiter)
 
     # Reset the log store. Note: SqliteLogStore reads AsyncSessionLocal
-    # at call time via `from app.infra.database import AsyncSessionLocal`,
-    # so our monkeypatch above already redirects its writes.
+    # at call time, so our monkeypatch above already redirects its writes.
     fresh_store = SqliteLogStore()
     monkeypatch.setattr(dependencies, "_log_store", fresh_store)
 
-    return fastapi_app
+    # Manually enter the app's lifespan context.
+    # This is what creates app.state.http_client and runs init_db().
+    # The `async with` triggers @asynccontextmanager startup; the yield
+    # at the end triggers shutdown.
+    async with fastapi_app.router.lifespan_context(fastapi_app):
+        yield fastapi_app
 
 
 @pytest_asyncio.fixture(scope="function")

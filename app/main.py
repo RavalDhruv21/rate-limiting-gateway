@@ -1,4 +1,3 @@
-# cd C:\dev\rate-limited-gateway
 """
 FastAPI application factory.
 
@@ -9,6 +8,10 @@ Wires together:
     standardized JSON responses.
   - The shared httpx client via the lifespan context.
   - DB table creation on startup (idempotent).
+
+Route registration order matters: the proxy router uses a {path:path}
+catch-all, so any specific route (like /health) MUST be registered
+before the proxy router or it will be shadowed.
 """
 
 import logging
@@ -81,12 +84,6 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(LoggingMiddleware)
 
-    # ── Routers ──
-    app.include_router(auth.router)
-    app.include_router(admin.router)
-    # Proxy is registered LAST so its catch-all doesn't shadow named routes.
-    app.include_router(proxy.router)
-
     # ── Global exception handler ──
     @app.exception_handler(GatewayError)
     async def handle_gateway_error(request: Request, exc: GatewayError) -> JSONResponse:
@@ -107,9 +104,16 @@ def create_app() -> FastAPI:
         )
 
     # ── Health check ──
+    # Registered BEFORE the proxy router so the catch-all doesn't shadow it.
     @app.get("/health", tags=["health"])
     async def health() -> dict:
         return {"status": "ok"}
+
+    # ── Routers ──
+    # Specific routers first; proxy LAST because of its {path:path} catch-all.
+    app.include_router(auth.router)
+    app.include_router(admin.router)
+    app.include_router(proxy.router)
 
     return app
 
