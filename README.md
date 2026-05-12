@@ -28,18 +28,18 @@ This implementation is intentionally simplified — it uses in-memory state for 
             ┌────────────────────────────────────┐
             │       API Gateway (FastAPI)        │
             │                                    │
-            │   ┌──────────────────────────┐     │
-            │   │ 1. Request ID            │     │
-            │   ├──────────────────────────┤     │
-            │   │ 2. Logging (timer start) │     │
-            │   ├──────────────────────────┤     │
-            │   │ 3. JWT Authentication    │     │
-            │   ├──────────────────────────┤     │
+            │   ┌──────────────────────────┐    │
+            │   │ 1. Request ID            │    │
+            │   ├──────────────────────────┤    │
+            │   │ 2. Logging (timer start) │    │
+            │   ├──────────────────────────┤    │
+            │   │ 3. JWT Authentication    │    │
+            │   ├──────────────────────────┤    │
             │   │ 4. Rate Limiter          │◄───┼─── State store
-            │   │    (token bucket)        │     │   (in-memory now;
-            │   ├──────────────────────────┤     │    Redis in v2)
-            │   │ 5. Proxy / Forwarder     │     │
-            │   └──────────────────────────┘     │
+            │   │    (token bucket)        │    │   (in-memory now;
+            │   ├──────────────────────────┤    │    Redis in v2)
+            │   │ 5. Proxy / Forwarder     │    │
+            │   └──────────────────────────┘    │
             │                                    │
             │   Logging (timer stop) ───────────────► SQLite
             │                                       (Postgres in v2)
@@ -68,15 +68,15 @@ The architecture follows a **layered design with pluggable storage interfaces**.
 
 ## Tech Stack
 
-|       Layer        |                Technology                     |                           Why                                     |
-|                    |                                               |                                                                   |
-| Web framework      | FastAPI + Uvicorn                             | Async-native, type-driven, ideal for I/O-bound gateways           |
-| Rate limit storage | Python dicts + `asyncio.Lock`                 | Simple, atomic per-key; swap to Redis for distributed deployments |
-| Log storage        | SQLite via SQLAlchemy 2.0 (async)             | File-based for v1; swap to PostgreSQL by changing the URL         |
-| Auth               | python-jose (HS256 JWT)                       | Self-contained tokens; no DB hit per request                      |
-| Config             | pydantic-settings                             | Typed `.env` loading with fail-fast validation                    |
-| HTTP client        | httpx (async)                                 | Forwards requests to the upstream backend                         |
-| Testing            | pytest + pytest-asyncio + httpx ASGI transport| In-process integration tests, no real network                     |
+| Layer | Technology | Why |
+|---|---|---|
+| Web framework | FastAPI + Uvicorn | Async-native, type-driven, ideal for I/O-bound gateways |
+| Rate limit storage | Python dicts + `asyncio.Lock` | Simple, atomic per-key; swap to Redis for distributed deployments |
+| Log storage | SQLite via SQLAlchemy 2.0 (async) | File-based for v1; swap to PostgreSQL by changing the URL |
+| Auth | python-jose (HS256 JWT) | Self-contained tokens; no DB hit per request |
+| Config | pydantic-settings | Typed `.env` loading with fail-fast validation |
+| HTTP client | httpx (async) | Forwards requests to the upstream backend |
+| Testing | pytest + pytest-asyncio + httpx ASGI transport | In-process integration tests, no real network |
 
 ## Quick Start
 
@@ -89,7 +89,7 @@ The architecture follows a **layered design with pluggable storage interfaces**.
 
 ```powershell
 # Clone and enter the project
-git clone https://github.com/YOUR_USERNAME/rate-limited-gateway.git
+git clone https://github.com/RavalDhruv21/rate-limited-gateway.git
 cd rate-limited-gateway
 
 # Create and activate the virtual environment
@@ -185,35 +185,35 @@ Invoke-RestMethod -Uri "http://localhost:8000/admin/logs?user_id=alice&limit=10"
 
 ### Public
 
-| Method | Path          |                           Description                              |
-|        |               |                                                                    |
-| GET    | `/health`     | Liveness probe. Returns `{"status": "ok"}`.                        |
-| POST   | `/auth/token` | Mint a JWT (dev-only). Body: `{"user_id": "...", "tier": "free"}`. |
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Liveness probe. Returns `{"status": "ok"}`. |
+| POST | `/auth/token` | Mint a JWT (dev-only). Body: `{"user_id": "...", "tier": "free"}`. |
 
 ### Authenticated (Requires `Authorization: Bearer <jwt>`)
 
-| Method |    Path   |                                  Description                                       |
-|        |           |                                                                                    |
-| ANY    | `/{path}` | Catch-all proxy. Forwards to `UPSTREAM_BASE_URL` after auth and rate-limit checks. |
+| Method | Path | Description |
+|---|---|---|
+| ANY | `/{path}` | Catch-all proxy. Forwards to `UPSTREAM_BASE_URL` after auth and rate-limit checks. |
 
 ### Admin (Requires `X-Admin-Key: <key>`)
 
-| Method |           Path           |                       Description                                 |
-|        |                          |                                                                   |
-| GET    | `/admin/quota/{user_id}` | View a user's quota override (404 if none).                       |
-| PUT    | `/admin/quota/{user_id}` | Set or update a user's quota override.                            |
-| DELETE | `/admin/quota/{user_id}` | Remove a user's override (revert to tier default).                |
-| GET    | `/admin/logs`            | Recent request logs. Query params: `user_id`, `limit`.            |
-| GET    | `/admin/stats`           | Aggregate metrics over the last 24 hours. Query param: `user_id`. |
+| Method | Path | Description |
+|---|---|---|
+| GET | `/admin/quota/{user_id}` | View a user's quota override (404 if none). |
+| PUT | `/admin/quota/{user_id}` | Set or update a user's quota override. |
+| DELETE | `/admin/quota/{user_id}` | Remove a user's override (revert to tier default). |
+| GET | `/admin/logs` | Recent request logs. Query params: `user_id`, `limit`. |
+| GET | `/admin/stats` | Aggregate metrics over the last 24 hours. Query param: `user_id`. |
 
 ### Response Headers (Authenticated Requests)
 
-|         Header          |                      Meaning                       |
-|                         |                                                    |
-| `X-Request-ID`          | Unique ID for this request, propagated to logs.    |
-| `X-RateLimit-Limit`     | The applicable rate limit.                         |
-| `X-RateLimit-Remaining` | Tokens remaining in the user's bucket.             |
-| `Retry-After`           | (On 429 only) Seconds until the user should retry. |
+| Header | Meaning |
+|---|---|
+| `X-Request-ID` | Unique ID for this request, propagated to logs. |
+| `X-RateLimit-Limit` | The applicable rate limit. |
+| `X-RateLimit-Remaining` | Tokens remaining in the user's bucket. |
+| `Retry-After` | (On 429 only) Seconds until the user should retry. |
 
 ### Standardized Error Response
 
@@ -359,10 +359,3 @@ No application code changes — the database swap is purely configuration becaus
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-
-
-
-
-
-
