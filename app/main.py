@@ -38,23 +38,24 @@ logger = logging.getLogger(__name__)
 
 
 # ─── Lifespan: startup + shutdown ──────────────────────────
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Run setup on startup, teardown on shutdown."""
     logger.info("Starting gateway. Initializing database...")
     await init_db()
 
-    # Shared httpx client used by the proxy route. One pool, reused
-    # across requests. Closed cleanly on shutdown.
     app.state.http_client = httpx.AsyncClient(timeout=30.0)
-    logger.info("Gateway ready.")
+    logger.info("Gateway ready. Redis + PostgreSQL active.")
 
-    yield  # ← app runs here
+    yield
 
-    logger.info("Shutting down. Closing HTTP client...")
+    logger.info("Shutting down...")
     await app.state.http_client.aclose()
 
+    # Close Redis connection pool cleanly.
+    from app.dependencies import _redis_client
+    await _redis_client.aclose()  # type: ignore[union-attr]
+    logger.info("Shutdown complete.")
 
 # ─── App factory ───────────────────────────────────────────
 

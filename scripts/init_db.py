@@ -12,17 +12,24 @@ way to verify your DATABASE_URL is configured correctly without
 needing to launch uvicorn.
 """
 
+"""
+Initialize the database — create all tables.
+
+For DEVELOPMENT: python scripts/init_db.py
+  Creates tables directly via SQLAlchemy create_all().
+  Fast, no migration history.
+
+For PRODUCTION: use Alembic instead:
+  alembic upgrade head
+  This tracks schema history and supports incremental changes.
+"""
+
 import sys
 from pathlib import Path
 
-# Make the project root importable when this script is run directly:
-#   python scripts/init_db.py
-# Without this, Python only adds scripts/ to sys.path and `app` is
-# not findable. This shim makes the script work whether or not the
-# project has been installed via `pip install -e .`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import asyncio  # noqa: E402  (imports after sys.path edit, intentional)
+import asyncio  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
 from app.infra.database import init_db  # noqa: E402
@@ -36,6 +43,7 @@ async def main() -> None:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
     print("✓ Tables created (or already existed).")
+    print("  Note: For production schema changes, use: alembic upgrade head")
 
 
 if __name__ == "__main__":

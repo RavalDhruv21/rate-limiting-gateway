@@ -5,21 +5,29 @@ description = "A learning-focused API gateway with per-user rate limiting, JWT a
 requires-python = ">=3.11"
 
 dependencies = [
-    # Web framework — async-native, modern, type-driven
+    # Web framework
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
 
-    # HTTP client for forwarding requests to the upstream backend
+    # HTTP client for forwarding requests
     "httpx>=0.27",
 
-    # SQLAlchemy 2.0 with async support — works with SQLite now, Postgres later with no ORM changes
+    # SQLAlchemy with async support
+    # Works with both SQLite (aiosqlite) and PostgreSQL (asyncpg)
     "sqlalchemy[asyncio]>=2.0",
-    "aiosqlite>=0.20",
+    "aiosqlite>=0.20",      # keep for tests (still use SQLite in tests)
+    "asyncpg>=0.29",        # NEW: PostgreSQL async driver
 
-    # JWT encoding and decoding
+    # Redis async client
+    "redis>=5.0",           # NEW: includes redis.asyncio
+
+    # Alembic for database migrations (replaces init_db for production)
+    "alembic>=1.13",        # NEW: proper migration management
+
+    # JWT
     "python-jose[cryptography]>=3.3",
 
-    # Config management — reads .env into typed Python objects
+    # Config management
     "pydantic-settings>=2.2",
 ]
 

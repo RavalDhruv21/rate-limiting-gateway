@@ -1,0 +1,42 @@
+# docker-compose.yml
+# Runs Redis and PostgreSQL locally for v2 development.
+# The gateway itself still runs via uvicorn (not in Docker) so
+# --reload works and you can edit code without rebuilding images.
+
+# version: "3.9"
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: gateway_redis
+    ports:
+      - "6379:6379"       # expose to localhost so uvicorn can reach it
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis_data:/data  # persist data across restarts
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: gateway_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: gateway_user
+      POSTGRES_PASSWORD: gateway_pass
+      POSTGRES_DB: gateway_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gateway_user -d gateway_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  redis_data:
+  postgres_data:

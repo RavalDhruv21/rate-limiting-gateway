@@ -28,18 +28,18 @@ This implementation is intentionally simplified — it uses in-memory state for 
             ┌────────────────────────────────────┐
             │       API Gateway (FastAPI)        │
             │                                    │
-            │   ┌──────────────────────────┐    │
-            │   │ 1. Request ID            │    │
-            │   ├──────────────────────────┤    │
-            │   │ 2. Logging (timer start) │    │
-            │   ├──────────────────────────┤    │
-            │   │ 3. JWT Authentication    │    │
-            │   ├──────────────────────────┤    │
+            │   ┌──────────────────────────┐     │
+            │   │ 1. Request ID            │     │
+            │   ├──────────────────────────┤     │
+            │   │ 2. Logging (timer start) │     │
+            │   ├──────────────────────────┤     │
+            │   │ 3. JWT Authentication    │     │
+            │   ├──────────────────────────┤     │
             │   │ 4. Rate Limiter          │◄───┼─── State store
-            │   │    (token bucket)        │    │   (in-memory now;
-            │   ├──────────────────────────┤    │    Redis in v2)
-            │   │ 5. Proxy / Forwarder     │    │
-            │   └──────────────────────────┘    │
+            │   │    (token bucket)        │     │   (in-memory now;
+            │   ├──────────────────────────┤     │    Redis in v2)
+            │   │ 5. Proxy / Forwarder     │     │
+            │   └──────────────────────────┘     │
             │                                    │
             │   Logging (timer stop) ───────────────► SQLite
             │                                       (Postgres in v2)

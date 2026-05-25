@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # v1 default is SQLite. v2 changes this to postgresql+asyncpg://...
     # No other code changes needed — that's the point of using SQLAlchemy.
     database_url: str = "sqlite+aiosqlite:///./gateway.db"
+    # ─── Redis ─────────────────────────────────────────────────
+    # Used by RedisRateLimiter in v2.
+    redis_url: str = "redis://localhost:6379/0"
 
     # ─── Upstream backend ──────────────────────────────────
     upstream_base_url: str = "https://httpbin.org"
