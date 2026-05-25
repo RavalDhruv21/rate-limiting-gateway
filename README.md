@@ -87,7 +87,7 @@ making implementations swappable without touching service, middleware, or route 
 ### ▶ v2 — Redis + PostgreSQL (Docker Required)
 
 ```powershell
-git clone https://github.com/YOUR_USERNAME/rate-limited-gateway.git
+git clone https://github.com/RavalDhruv21/rate-limited-gateway.git
 cd rate-limited-gateway
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
