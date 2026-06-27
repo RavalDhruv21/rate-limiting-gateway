@@ -101,13 +101,8 @@ async def list_logs(
     """Recent request logs, newest-first, optionally filtered by user."""
     entries = await store.query(user_id=user_id, limit=limit)
     # Map LogEntry → RequestLogResponse. created_at isn't in LogEntry
-    # (the transport object) so we'd need to extend the interface to
-    # surface it cleanly. For v1, derive it from the underlying ORM by
-    # going through a separate path — or include it in LogEntry.
-    #
-    # We chose to keep LogEntry minimal; here we re-query enough info
-    # to fill the response. (In a polished v2, LogEntry would carry
-    # created_at and this mapping would be trivial.)
+    # (the transport object) so extend LogEntry if you need it in the
+    # response — for now we omit it and keep LogEntry minimal.
     return [
         RequestLogResponse(
             request_id=e.request_id,

@@ -3,8 +3,7 @@ Abstract interface for request log storage.
 
 The logging middleware calls write(); the admin endpoints call
 query() and stats(). Concrete implementations decide how the data
-is persisted (SQLite for v1, optionally Postgres or Elasticsearch
-later).
+is persisted — currently PostgresLogStore (SQLAlchemy + PostgreSQL).
 """
 
 from abc import ABC, abstractmethod
@@ -22,9 +21,8 @@ class LogEntry:
 
     This is intentionally NOT the same as the SQLAlchemy RequestLog ORM
     model — it's a transport object. The store implementation converts
-    LogEntry to whatever its storage requires. (SQLite stores it as a
-    RequestLog row; a future Elasticsearch impl would convert to a JSON
-    document.)
+    LogEntry to whatever its storage requires (a RequestLog row for
+    PostgresLogStore; a JSON document for a hypothetical search backend).
     """
 
     request_id: str
@@ -49,11 +47,7 @@ class LogStats:
 
 
 class LogStore(ABC):
-    """
-    Abstract log store.
-
-    Concrete implementations: SqliteLogStore (v1).
-    """
+    """Abstract log store. Concrete implementation: PostgresLogStore."""
 
     @abstractmethod
     async def write(self, entry: LogEntry) -> None:

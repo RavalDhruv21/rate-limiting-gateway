@@ -32,11 +32,10 @@ class LimitResult:
 
 class RateLimiter(ABC):
     """
-    Abstract rate limiter.
+    Abstract rate limiter. Concrete implementation: RedisRateLimiter.
 
-    Concrete implementations (InMemoryRateLimiter, future RedisRateLimiter)
-    must override `check`. The service layer calls this method and reacts
-    to the LimitResult — without knowing the storage backend.
+    The service layer calls check() and reacts to the LimitResult
+    without knowing the storage backend.
     """
 
     @abstractmethod
@@ -65,8 +64,8 @@ class RateLimiter(ABC):
 
         IMPORTANT contract for implementations: this method must be
         "atomic" in the sense that two concurrent calls for the same
-        key must not both succeed if only one token is left. The
-        in-memory implementation uses asyncio.Lock; the Redis version
-        will use a Lua script.
+        key must not both succeed if only one token is left.
+        RedisRateLimiter achieves this via a Lua script that runs
+        atomically inside Redis.
         """
         ...

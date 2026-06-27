@@ -62,8 +62,8 @@ async def proxy(path: str, request: Request) -> Response:
     if request.client:
         headers["X-Forwarded-For"] = request.client.host
 
-    # Read body once. For very large uploads we'd stream, but for v1
-    # this is simpler and works for any reasonable request size.
+    # Read body once. For very large uploads this should be streamed,
+    # but for typical API payloads reading it upfront is simpler.
     body = await request.body()
 
     # Use the shared client from app.state (set up in main.py's lifespan).

@@ -6,9 +6,8 @@ return the new state and whether the request is allowed.
 
 Why isolate this from storage?
   - Testable in isolation, with no DB or Redis required.
-  - Reusable: the in-memory limiter and the future Redis limiter
-    use the exact same math; they only differ in how they persist
-    state between calls.
+  - The Lua script inside RedisRateLimiter implements the same math;
+    this module is the reference and the unit-test target.
 
 Returns are explicit dataclasses (not tuples) so the call sites stay
 self-documenting.

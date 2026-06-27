@@ -2,8 +2,8 @@
 Integration tests — full HTTP stack through the FastAPI app.
 
 We use httpx's ASGI transport so requests go through every middleware
-and route without touching the network. Each test gets a fresh
-in-memory database via the `app` fixture in conftest.py.
+and route without touching the network. Each test gets a clean Postgres
+schema and a flushed Redis DB via the fixtures in conftest.py.
 
 These are the tests that catch:
   - Middleware ordering bugs.

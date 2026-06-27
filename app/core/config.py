@@ -38,11 +38,8 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60
 
     # ─── Database ──────────────────────────────────────────
-    # v1 default is SQLite. v2 changes this to postgresql+asyncpg://...
-    # No other code changes needed — that's the point of using SQLAlchemy.
-    database_url: str = "sqlite+aiosqlite:///./gateway.db"
+    database_url: str = "postgresql+asyncpg://gateway_user:gateway_pass@localhost:5432/gateway_db"
     # ─── Redis ─────────────────────────────────────────────────
-    # Used by RedisRateLimiter in v2.
     redis_url: str = "redis://localhost:6379/0"
 
     # ─── Upstream backend ──────────────────────────────────

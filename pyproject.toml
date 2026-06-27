@@ -1,7 +1,7 @@
 [project]
 name = "rate-limited-gateway"
 version = "0.1.0"
-description = "A learning-focused API gateway with per-user rate limiting, JWT auth, and request logging. Built with FastAPI, in-memory state, and SQLite — designed to upgrade cleanly to Redis/PostgreSQL."
+description = "A production-shaped API gateway with per-user rate limiting, JWT auth, and request logging. Built with FastAPI, Redis, and PostgreSQL."
 requires-python = ">=3.11"
 
 dependencies = [
@@ -13,16 +13,14 @@ dependencies = [
     "httpx>=0.27",
 
     # SQLAlchemy with async support
-    # Works with both SQLite (aiosqlite) and PostgreSQL (asyncpg)
     "sqlalchemy[asyncio]>=2.0",
-    "aiosqlite>=0.20",      # keep for tests (still use SQLite in tests)
-    "asyncpg>=0.29",        # NEW: PostgreSQL async driver
+    "asyncpg>=0.29",        # PostgreSQL async driver
 
-    # Redis async client
-    "redis>=5.0",           # NEW: includes redis.asyncio
+    # Redis async client (includes redis.asyncio)
+    "redis>=5.0",
 
-    # Alembic for database migrations (replaces init_db for production)
-    "alembic>=1.13",        # NEW: proper migration management
+    # Alembic for database migrations
+    "alembic>=1.13",
 
     # JWT
     "python-jose[cryptography]>=3.3",

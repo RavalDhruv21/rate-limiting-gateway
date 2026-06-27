@@ -1,13 +1,9 @@
 """
-SQLite log store — v1 implementation.
+PostgreSQL-backed log store.
 
 Backed by the SQLAlchemy async engine and the RequestLog ORM model.
-For v2, swapping to Postgres requires no changes here — only the
-DATABASE_URL in config changes (asyncpg driver instead of aiosqlite).
-
-Errors during write() are logged but never raised. The contract from
-LogStore says logging must not break user requests; we honor that
-even at the storage layer.
+Errors during write() are logged but never raised — logging must not
+break user requests.
 """
 
 import logging
@@ -28,15 +24,14 @@ def _session_factory():
 
     This indirection is critical for testability — test fixtures
     monkeypatch app.infra.database.AsyncSessionLocal, and a static
-    `from app.infra.database import AsyncSessionLocal` at the top of
-    this file would capture the unpatched value at import time.
+    import at the top of this file would capture the unpatched value.
     """
     from app.infra import database as db_module
     return db_module.AsyncSessionLocal
 
 
-class SqliteLogStore(LogStore):
-    """SQLAlchemy-backed log store. Works for SQLite and Postgres."""
+class PostgresLogStore(LogStore):
+    """SQLAlchemy-backed log store targeting PostgreSQL."""
 
     async def write(self, entry: LogEntry) -> None:
         try:

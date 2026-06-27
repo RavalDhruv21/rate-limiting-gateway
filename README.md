@@ -57,13 +57,12 @@ making implementations swappable without touching service, middleware, or route 
 ## Features
 
 - **JWT authentication** with tier-aware claims (`free` / `pro` / `enterprise`)
-- **Token bucket rate limiter** — allows bursts, refills continuously, atomic via Redis Lua in v2
+- **Token bucket rate limiter** — allows bursts, refills continuously, atomic via Redis Lua scripts
 - **Per-user quota overrides** — admins boost or restrict users at runtime without redeploying
 - **Fire-and-forget request logging** — DB hiccups never slow user requests
 - **Standardized error responses** — every error returns the same JSON envelope with request ID
 - **Auto-generated API docs** at `/docs` (Swagger UI)
 - **27 passing tests** — unit, concurrency, and full-stack integration
-- **Pluggable storage** — swap Redis/PostgreSQL for in-memory/SQLite with one line
 - **Alembic migrations** — proper schema management for PostgreSQL
 - **Docker Compose** — one command to start the full infrastructure
 
@@ -84,7 +83,7 @@ making implementations swappable without touching service, middleware, or route 
 
 ---
 
-### ▶ v2 — Redis + PostgreSQL (Docker Required)
+### Quick Start (Docker Required)
 
 ```powershell
 git clone https://github.com/RavalDhruv21/rate-limited-gateway.git
@@ -210,7 +209,7 @@ Error codes: `UNAUTHORIZED`, `INVALID_TOKEN`, `TOKEN_EXPIRED`, `FORBIDDEN`,
 rate-limited-gateway/
 ├── app/
 │   ├── main.py                  # FastAPI factory, middleware order, lifespan
-│   ├── dependencies.py          # DI seam — THE file that changed v1 → v2
+│   ├── dependencies.py          # DI providers — rate limiter, log store, Redis
 │   ├── core/
 │   │   ├── config.py            # Typed settings from .env
 │   │   ├── security.py          # JWT encode/decode
@@ -218,21 +217,20 @@ rate-limited-gateway/
 │   ├── models/
 │   │   ├── db.py                # SQLAlchemy ORM tables
 │   │   └── schemas.py           # Pydantic API contracts
-│   ├── infra/                   # ← PLUGGABLE RING
+│   ├── infra/
 │   │   ├── database.py          # Async engine + session factory
 │   │   ├── rate_limiter/
 │   │   │   ├── base.py          # RateLimiter abstract interface
-│   │   │   ├── algorithms.py    # Pure token-bucket math (reused in both versions)
-│   │   │   ├── memory.py        # v1: in-memory implementation
-│   │   │   └── redis_limiter.py # v2: Redis + Lua atomic implementation
+│   │   │   ├── algorithms.py    # Pure token-bucket math (storage-agnostic)
+│   │   │   └── redis_limiter.py # Redis + Lua atomic implementation
 │   │   └── log_store/
-│   │       ├── base.py          # LogStore abstract interface
-│   │       └── sqlite.py        # Works for both SQLite and PostgreSQL
-│   ├── services/                # Business logic — unchanged between v1 and v2
-│   ├── middleware/              # HTTP interceptors — unchanged between v1 and v2
-│   ├── routes/                  # Endpoints — unchanged between v1 and v2
+│   │       ├── base.py               # LogStore abstract interface
+│   │       └── postgres_log_store.py # SQLAlchemy + PostgreSQL implementation
+│   ├── services/                # Business logic
+│   ├── middleware/              # HTTP interceptors
+│   ├── routes/                  # Endpoints
 │   └── utils/
-├── migrations/                  # Alembic schema migrations (v2)
+├── migrations/                  # Alembic schema migrations
 ├── tests/                       # 27 tests: unit, concurrency, integration
 ├── scripts/
 │   ├── init_db.py               # CLI: initialize database
@@ -251,12 +249,12 @@ pytest -v
 pytest --cov=app --cov-report=term-missing
 ```
 
-Tests use SQLite in-memory and `InMemoryRateLimiter` — completely isolated from Redis/PostgreSQL. All 27 tests pass regardless of whether Docker is running.
+Tests require running Redis and PostgreSQL (the same `docker compose up -d` used for dev).
+Each test gets a clean slate: Postgres tables are created/dropped per test, and the Redis DB is flushed between tests.
 
 Three levels covered:
 
 - **Unit** — token bucket math, JWT primitives. Milliseconds per test.
-- **Concurrency** — 20 parallel requests against a limit of 5, verifies exactly 5 allowed. Catches race conditions.
 - **Integration** — full HTTP stack via httpx ASGI transport. Verifies middleware ordering, error shapes, and the 429-not-500 regression.
 
 ---

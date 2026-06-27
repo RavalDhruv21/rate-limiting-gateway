@@ -1,11 +1,6 @@
 """
 Async SQLAlchemy engine, session factory, and ORM base class.
 
-This module is the one place that knows about the database driver.
-Every other file talks to SQLAlchemy through these abstractions —
-which is why swapping SQLite for Postgres in v2 is a config change,
-not a code change.
-
 Three exported objects:
   - `engine`:    the long-lived async engine (connection pool).
   - `AsyncSessionLocal`: factory that yields a fresh AsyncSession per call.
@@ -91,8 +86,8 @@ async def init_db() -> None:
     a one-shot setup. Safe to call repeatedly — it only creates
     tables that don't already exist.
 
-    In production with Postgres we'd use Alembic migrations instead;
-    create_all is fine for a v1 SQLite project.
+    Prefer Alembic migrations (`alembic upgrade head`) for production
+    schema changes; create_all is used here for initial bootstrapping.
     """
     # The import is inside the function to avoid a circular import:
     # models/db.py imports Base from this file. If we import it at

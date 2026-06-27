@@ -1,13 +1,8 @@
 """
-FastAPI dependency providers — v2 (Redis + PostgreSQL).
+FastAPI dependency providers — Redis + PostgreSQL.
 
-THE SEAM. This is the only file that changed between v1 and v2.
-
-v1: InMemoryRateLimiter + SqliteLogStore
-v2: RedisRateLimiter   + SqliteLogStore (now backed by PostgreSQL
-    via DATABASE_URL — no code change needed, just config)
-
-The service layer, middleware, and routes are completely unchanged.
+The service layer, middleware, and routes depend on these providers,
+never on concrete infrastructure classes directly.
 """
 
 from typing import Annotated
@@ -19,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.infra.database import get_db_session
 from app.infra.log_store.base import LogStore
-from app.infra.log_store.sqlite import SqliteLogStore
+from app.infra.log_store.postgres_log_store import PostgresLogStore
 from app.infra.rate_limiter.base import RateLimiter
 from app.infra.rate_limiter.redis_limiter import RedisRateLimiter
 
@@ -33,24 +28,19 @@ _redis_client = aioredis.from_url(
 )
 
 # ─── Singletons ────────────────────────────────────────────
-# v2: Redis for rate limiting (distributed, atomic)
 _rate_limiter: RateLimiter = RedisRateLimiter(_redis_client)
-
-# v2: SqliteLogStore still works — it now targets PostgreSQL
-# because DATABASE_URL in .env points to PostgreSQL.
-# Zero code change needed here.
-_log_store: LogStore = SqliteLogStore()
+_log_store: LogStore = PostgresLogStore()
 
 
 # ─── Provider functions ───────────────────────────────────
 
 def get_rate_limiter() -> RateLimiter:
-    """Return the process-wide rate limiter (now Redis-backed)."""
+    """Return the process-wide Redis-backed rate limiter."""
     return _rate_limiter
 
 
 def get_log_store() -> LogStore:
-    """Return the process-wide log store (now PostgreSQL-backed)."""
+    """Return the process-wide PostgreSQL-backed log store."""
     return _log_store
 
 

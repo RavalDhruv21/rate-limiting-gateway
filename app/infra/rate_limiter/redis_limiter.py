@@ -1,24 +1,18 @@
 """
-Redis-backed rate limiter — v2 implementation.
+Redis-backed rate limiter.
 
-Implements the same RateLimiter abstract interface as InMemoryRateLimiter.
-The service layer and middleware are completely unaware of this swap.
+Implements the RateLimiter abstract interface. The service layer and
+middleware depend only on that interface and are unaware of the backend.
 
-Why Redis over in-memory:
+Why Redis:
   - Shared state across multiple gateway instances (horizontal scaling).
   - Survives gateway restarts (tokens persist in Redis).
-  - Redis Lua scripts are atomic — eliminates the race condition that
-    asyncio.Lock solves in the memory version.
-
-How atomicity works here:
-  The entire check-and-update runs as a single Lua script inside Redis.
-  Redis executes Lua scripts atomically — no other Redis command can
-  run between our read and our write. This is the distributed equivalent
-  of asyncio.Lock, but it works across multiple processes and machines.
+  - Lua scripts execute atomically — no other Redis command interleaves
+    between the read and write, making this safe under any concurrency.
 
 Token bucket algorithm:
   Same math as algorithms.py — capacity, refill rate, elapsed time.
-  Reimplemented in Lua because the logic must run inside Redis atomically.
+  Reimplemented in Lua so the check-and-update is one atomic operation.
 """
 
 import redis.asyncio as aioredis
@@ -108,10 +102,8 @@ class RedisRateLimiter(RateLimiter):
     """
     Token-bucket rate limiter backed by Redis.
 
-    Drop-in replacement for InMemoryRateLimiter. The service layer
-    and middleware call the same check() method and receive the same
-    LimitResult — they never know the storage backend changed.
-
+    The service layer and middleware call the abstract check() method
+    and receive a LimitResult — they never depend on this class directly.
     Thread-safe across multiple processes and machines via Lua atomicity.
     """
 
