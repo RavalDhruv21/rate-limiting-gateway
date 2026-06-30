@@ -57,7 +57,9 @@ def do_run_migrations(connection) -> None:
 
 async def run_async_migrations() -> None:
     """Run migrations using an async engine (required for asyncpg)."""
-    engine = create_async_engine(settings.database_url)
+    from app.infra.database import _build_engine_kwargs
+    url, kwargs = _build_engine_kwargs(settings.database_url)
+    engine = create_async_engine(url, **kwargs)
     async with engine.begin() as conn:
         await conn.run_sync(do_run_migrations)
     await engine.dispose()

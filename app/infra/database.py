@@ -12,6 +12,7 @@ Plus two helpers:
 """
 
 from collections.abc import AsyncGenerator
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -22,17 +23,28 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
 
-# ─── The engine ────────────────────────────────────────────
-# `echo=False` keeps SQL out of the logs in development.
-# Flip to True temporarily when debugging weird queries.
-#
-# `future=True` is the default in SQLAlchemy 2.x — included for
-# clarity to future readers.
-engine = create_async_engine(
-    settings.database_url,
-    echo=False,
-    future=True,
-)
+
+def _build_engine_kwargs(url: str) -> dict:
+    """Strip ssl/sslmode from URL and pass SSL via connect_args instead.
+
+    asyncpg does not accept sslmode/ssl as query parameters — it causes
+    a UnicodeError on hostname resolution. The correct way is connect_args.
+    """
+    parsed = urlparse(url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    ssl_val = params.pop("ssl", params.pop("sslmode", [None]))[0]
+    clean_query = urlencode({k: v[0] for k, v in params.items()})
+    clean_url = urlunparse(parsed._replace(query=clean_query))
+    kwargs: dict = {"echo": False, "future": True}
+    if ssl_val and ssl_val != "disable":
+        import ssl as _ssl
+        ctx = _ssl.create_default_context()
+        kwargs["connect_args"] = {"ssl": ctx}
+    return clean_url, kwargs
+
+
+_db_url, _engine_kwargs = _build_engine_kwargs(settings.database_url)
+engine = create_async_engine(_db_url, **_engine_kwargs)
 
 
 # ─── The session factory ───────────────────────────────────
