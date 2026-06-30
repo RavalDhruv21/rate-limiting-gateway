@@ -138,12 +138,13 @@ def create_app() -> FastAPI:
     app.include_router(health_routes.router)
     app.include_router(auth.router)
     app.include_router(admin.router)
-    app.include_router(proxy.router)
 
     # ── Prometheus metrics ──
-    # Must be called AFTER routes are registered so the instrumentator
-    # can see all route handlers.
+    # Must be called BEFORE the proxy router because the proxy uses a
+    # /{path:path} catch-all that would shadow the /metrics route.
     setup_metrics(app)
+
+    app.include_router(proxy.router)
 
     return app
 
