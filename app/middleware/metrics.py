@@ -40,12 +40,15 @@ def setup_metrics(app) -> None:
     Instrument the FastAPI app and expose /metrics.
 
     Call once inside create_app() after routes are registered.
-    The /metrics route is added here; it returns Prometheus text format.
     """
-    instrumentator = Instrumentator(
+    from fastapi import Response
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+    Instrumentator(
         should_group_status_codes=True,
         excluded_handlers=["/metrics", "/health", "/ready"],
-    )
-    instrumentator.instrument(app)
+    ).instrument(app)
 
-    instrumentator.expose(app, endpoint="/metrics")
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
