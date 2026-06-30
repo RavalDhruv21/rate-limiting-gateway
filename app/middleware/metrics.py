@@ -48,11 +48,4 @@ def setup_metrics(app) -> None:
     )
     instrumentator.instrument(app)
 
-    from app.core.config import settings
-
-    if settings.app_env == "production":
-        from fastapi import Depends
-        from app.dependencies import require_admin
-        instrumentator.expose(app, endpoint="/metrics", dependencies=[Depends(require_admin)])
-    else:
-        instrumentator.expose(app, endpoint="/metrics")
+    instrumentator.expose(app, endpoint="/metrics")
