@@ -2,17 +2,21 @@
 Catch-all proxy route.
 
 For any path not matched by /auth, /admin, /health, /docs, this route
-forwards the request to UPSTREAM_BASE_URL and streams the response
-back.
+forwards the request to UPSTREAM_BASE_URL and streams the response back.
 
 By the time we get here:
   - AuthMiddleware has validated the JWT.
   - RateLimitMiddleware has checked quotas.
   - LoggingMiddleware is timing the round-trip.
 
-The proxy strips sensitive headers (Authorization, Host) on the way
-out — the upstream shouldn't see the user's bearer token, and Host
-must match the upstream's hostname.
+The proxy strips sensitive headers (Authorization, Host) on the way out.
+Each upstream call is wrapped in the circuit breaker: after 5 consecutive
+failures the breaker opens and returns 503 immediately for 60s, protecting
+both the client (fast fail) and the upstream (no flood during outage).
+
+Upstream results are also recorded for adaptive rate limiting — when error
+rate exceeds 20% the gateway automatically halves rate limits to reduce
+traffic on a struggling upstream.
 """
 
 import httpx
@@ -21,20 +25,28 @@ from fastapi.responses import Response
 
 from app.core.config import settings
 from app.core.errors import UpstreamError, UpstreamTimeout
+from app.infra.circuit_breaker import CircuitOpenError, upstream_breaker
 
 router = APIRouter(tags=["proxy"])
 
-# Headers we never forward.
-# - host: must match the upstream's, set automatically by httpx.
-# - authorization: our user's JWT, not for the upstream.
-# - content-length: httpx recalculates based on what we send.
 _STRIP_REQUEST_HEADERS = {"host", "authorization", "content-length"}
 
-# A shared httpx client. In a polished app, we'd create this in main.py's
-# lifespan and close it on shutdown so the connection pool is shared
-# across requests. We'll wire that up in main.py.
-# For now, a module-level singleton (see main.py — we'll attach the
-# client to app.state and use it from there).
+
+async def _do_upstream_request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    headers: dict,
+    content: bytes,
+) -> httpx.Response:
+    """The actual HTTP call — wrapped by the circuit breaker."""
+    return await client.request(
+        method=method,
+        url=url,
+        headers=headers,
+        content=content,
+        timeout=30.0,
+    )
 
 
 @router.api_route(
@@ -45,15 +57,14 @@ async def proxy(path: str, request: Request) -> Response:
     """
     Forward the request to UPSTREAM_BASE_URL/{path}.
 
-    Streams the response body back. Adds X-Forwarded-For with the
-    client's IP for upstream's awareness.
+    Returns 503 immediately if the circuit breaker is open.
+    Records whether the upstream responded successfully for adaptive
+    rate limiting.
     """
-    # Build the target URL: UPSTREAM_BASE_URL + path + query string.
     upstream = settings.upstream_base_url.rstrip("/") + "/" + path
     if request.url.query:
         upstream = f"{upstream}?{request.url.query}"
 
-    # Filter outgoing headers.
     headers = {
         k: v
         for k, v in request.headers.items()
@@ -62,28 +73,33 @@ async def proxy(path: str, request: Request) -> Response:
     if request.client:
         headers["X-Forwarded-For"] = request.client.host
 
-    # Read body once. For very large uploads this should be streamed,
-    # but for typical API payloads reading it upfront is simpler.
     body = await request.body()
-
-    # Use the shared client from app.state (set up in main.py's lifespan).
     client: httpx.AsyncClient = request.app.state.http_client
 
+    # ── Import health recorder (local to avoid circular) ──
+    from app.dependencies import get_redis_client
+    from app.services.upstream_health import record_upstream_result
+    redis = get_redis_client()
+
+    # ── Circuit breaker wraps the upstream call ────────────
     try:
-        upstream_response = await client.request(
-            method=request.method,
-            url=upstream,
-            headers=headers,
-            content=body,
-            timeout=30.0,
+        upstream_response: httpx.Response = await upstream_breaker.call(
+            _do_upstream_request, client, request.method, upstream, headers, body
         )
+    except CircuitOpenError as exc:
+        await record_upstream_result(redis, success=False)
+        raise UpstreamError("Upstream circuit open — service temporarily unavailable.") from exc
     except httpx.TimeoutException as exc:
+        await record_upstream_result(redis, success=False)
         raise UpstreamTimeout("Upstream backend timed out.") from exc
     except httpx.RequestError as exc:
+        await record_upstream_result(redis, success=False)
         raise UpstreamError(f"Upstream backend error: {exc}") from exc
 
-    # Pass response headers through, stripping hop-by-hop headers
-    # (these are connection-specific and shouldn't be relayed).
+    # Record success/failure for adaptive rate limiting.
+    is_server_error = upstream_response.status_code >= 500
+    await record_upstream_result(redis, success=not is_server_error)
+
     hop_by_hop = {
         "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
         "te", "trailers", "transfer-encoding", "upgrade",

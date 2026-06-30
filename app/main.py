@@ -3,15 +3,15 @@ FastAPI application factory.
 
 Wires together:
   - All middleware (registered in REVERSE order — see comment below).
-  - All routers (auth, admin, proxy).
-  - A single global exception handler that turns GatewayError into
-    standardized JSON responses.
-  - The shared httpx client via the lifespan context.
+  - All routers (health, auth, admin, proxy).
+  - A single global exception handler for standardized JSON error responses.
+  - The shared httpx client and Prometheus instrumentation via lifespan.
+  - Structured JSON logging configured before anything else.
   - DB table creation on startup (idempotent).
 
 Route registration order matters: the proxy router uses a {path:path}
-catch-all, so any specific route (like /health) MUST be registered
-before the proxy router or it will be shadowed.
+catch-all, so specific routes MUST be registered before it or they
+will be shadowed.
 """
 
 import logging
@@ -24,17 +24,19 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.errors import GatewayError, RateLimitExceeded, build_error_response
+from app.core.logging import setup_logging
 from app.infra.database import init_db
 from app.middleware.auth import AuthMiddleware
 from app.middleware.logging import LoggingMiddleware
+from app.middleware.metrics import setup_metrics
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
+from app.middleware.security import add_security_middleware
 from app.routes import admin, auth, proxy
+from app.routes import health as health_routes
 
-logging.basicConfig(
-    level=settings.log_level,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+# Configure structured JSON logging before anything else logs.
+setup_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
 
@@ -43,21 +45,20 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Run setup on startup, teardown on shutdown."""
-    logger.info("Starting gateway. Initializing database...")
+    logger.info("Starting gateway", extra={"event": "startup"})
     await init_db()
 
     app.state.http_client = httpx.AsyncClient(timeout=30.0)
-    logger.info("Gateway ready. Redis + PostgreSQL active.")
+    logger.info("Gateway ready", extra={"event": "ready", "env": settings.app_env})
 
     yield
 
-    logger.info("Shutting down...")
+    logger.info("Shutting down", extra={"event": "shutdown"})
     await app.state.http_client.aclose()
 
-    # Close Redis connection pool cleanly.
     from app.dependencies import _redis_client
     await _redis_client.aclose()  # type: ignore[union-attr]
-    logger.info("Shutdown complete.")
+    logger.info("Shutdown complete", extra={"event": "shutdown_complete"})
 
 
 # ─── App factory ───────────────────────────────────────────
@@ -72,8 +73,6 @@ def create_app() -> FastAPI:
     )
 
     # ── Custom OpenAPI schema ──
-    # Adds the Authorize button to Swagger UI so users can paste
-    # their JWT token once and have it sent on every request.
     def custom_openapi():
         if app.openapi_schema:
             return app.openapi_schema
@@ -83,7 +82,6 @@ def create_app() -> FastAPI:
             description="A production-shaped API gateway with per-user rate limiting.",
             routes=app.routes,
         )
-        # Add Bearer JWT security scheme
         openapi_schema["components"]["securitySchemes"] = {
             "bearerAuth": {
                 "type": "http",
@@ -91,64 +89,64 @@ def create_app() -> FastAPI:
                 "bearerFormat": "JWT",
             }
         }
-        # Apply security globally to all routes
         openapi_schema["security"] = [{"bearerAuth": []}]
         return openapi_schema
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
-    # ── Middleware registration order ──
+    # ── Middleware registration ──
     #
-    # IMPORTANT: Starlette/FastAPI applies middleware in REVERSE order
-    # of registration. The LAST added middleware runs FIRST on incoming
-    # requests (and LAST on outgoing responses).
+    # Starlette applies middleware in REVERSE order of registration.
+    # The LAST added middleware runs FIRST on incoming requests.
     #
-    # We want this incoming order:
-    #   1. LoggingMiddleware  (outermost — captures total latency)
-    #   2. RequestIDMiddleware (set ID before anything else logs)
-    #   3. AuthMiddleware
-    #   4. RateLimitMiddleware (innermost middleware before routes)
+    # Desired request order:
+    #   1. SecurityHeadersMiddleware  (outermost — sets headers on all responses)
+    #   2. CORSMiddleware             (handles preflight)
+    #   3. TrustedHostMiddleware      (rejects bad Host headers)
+    #   4. LoggingMiddleware          (times total round-trip)
+    #   5. RequestIDMiddleware        (assigns request ID)
+    #   6. AuthMiddleware             (validates JWT)
+    #   7. RateLimitMiddleware        (innermost — checks quotas)
     #
-    # So we register in REVERSE:
+    # Registration order (reverse of above):
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(AuthMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(LoggingMiddleware)
+    # Security middleware (CORS, TrustedHost, SecurityHeaders) registered last
+    # so they run outermost. add_security_middleware handles conditional logic.
+    add_security_middleware(app)
 
     # ── Global exception handler ──
     @app.exception_handler(GatewayError)
     async def handle_gateway_error(request: Request, exc: GatewayError) -> JSONResponse:
         request_id = getattr(request.state, "request_id", None)
         body = build_error_response(exc, request_id=request_id)
-
         headers: dict[str, str] = {}
-        # Rate-limit errors include a Retry-After (standard HTTP header).
         if isinstance(exc, RateLimitExceeded):
             retry_after = exc.details.get("retry_after")
             if retry_after is not None:
                 headers["Retry-After"] = str(retry_after)
-
         return JSONResponse(
             status_code=exc.status_code,
             content=body,
             headers=headers,
         )
 
-    # ── Health check ──
-    # Registered BEFORE the proxy router so the catch-all doesn't shadow it.
-    @app.get("/health", tags=["health"])
-    async def health() -> dict:
-        return {"status": "ok"}
-
     # ── Routers ──
-    # Specific routers first; proxy LAST because of its {path:path} catch-all.
+    # health and specific routers BEFORE the catch-all proxy.
+    app.include_router(health_routes.router)
     app.include_router(auth.router)
     app.include_router(admin.router)
     app.include_router(proxy.router)
 
+    # ── Prometheus metrics ──
+    # Must be called AFTER routes are registered so the instrumentator
+    # can see all route handlers.
+    setup_metrics(app)
+
     return app
 
 
-# Module-level app instance for uvicorn to import.
-# Run with: uvicorn app.main:app --reload
+# Module-level app instance for uvicorn / gunicorn to import.
 app = create_app()

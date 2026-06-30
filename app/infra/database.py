@@ -22,7 +22,6 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
 
-
 # ─── The engine ────────────────────────────────────────────
 # `echo=False` keeps SQL out of the logs in development.
 # Flip to True temporarily when debugging weird queries.

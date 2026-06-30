@@ -12,6 +12,9 @@ raising an exception. This is because FastAPI's @exception_handler only
 catches exceptions raised inside route handlers — not inside Starlette
 middleware. Raising RateLimitExceeded here would bubble past FastAPI's
 handler machinery and result in a generic 500.
+
+Also sets X-RateLimit-Policy per the IETF RateLimit Headers draft:
+  https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/
 """
 
 from fastapi import Request
@@ -20,11 +23,13 @@ from starlette.responses import JSONResponse, Response
 
 from app.core.errors import RateLimitExceeded, build_error_response
 from app.dependencies import get_rate_limiter
-from app.services.rate_limit_service import check_rate_limit
+from app.middleware.metrics import REQUESTS_ALLOWED, REQUESTS_LIMITED
+from app.services.rate_limit_service import _WINDOW_SECONDS, check_rate_limit
 
-# Same list as auth — these paths don't have a user_id so we can't
-# rate-limit them per-user.
-PUBLIC_PATH_PREFIXES = ("/auth", "/admin", "/health", "/docs", "/openapi.json", "/redoc")
+PUBLIC_PATH_PREFIXES = (
+    "/auth", "/admin", "/health", "/ready",
+    "/docs", "/openapi.json", "/redoc", "/metrics",
+)
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -43,24 +48,30 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         limiter = get_rate_limiter()
 
-        # Import AsyncSessionLocal DYNAMICALLY (at call time, not module
-        # load time). This is so test fixtures that monkeypatch the
-        # session factory in app.infra.database take effect — if we did
-        # a top-level `from app.infra.database import AsyncSessionLocal`,
-        # we'd capture a reference at import time that bypasses the patch.
-        from app.infra import database as db_module
+        # Get upstream health factor for adaptive rate limiting.
+        # Imported locally so test fixtures that monkeypatch dependencies work.
+        from app.dependencies import get_redis_client
+        from app.services.upstream_health import get_health_factor
+        redis = get_redis_client()
+        health_factor = await get_health_factor(redis)
 
+        from app.infra import database as db_module
         async with db_module.AsyncSessionLocal() as db:
             result = await check_rate_limit(
                 limiter=limiter,
                 db=db,
                 user_id=user_id,
                 tier=tier,  # type: ignore[arg-type]
+                health_factor=health_factor,
             )
 
         request.state.rate_limit_info = result
 
+        # IETF RateLimit-Policy header: "<limit>;w=<window>"
+        policy_header = f"{result.limit};w={_WINDOW_SECONDS}"
+
         if not result.allowed:
+            REQUESTS_LIMITED.labels(tier=tier).inc()
             exc = RateLimitExceeded(
                 f"Rate limit exceeded. Try again in {result.retry_after}s.",
                 details={"retry_after": result.retry_after},
@@ -76,11 +87,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "X-RateLimit-Limit": str(result.limit),
                     "X-RateLimit-Remaining": "0",
                     "X-RateLimit-Retry-After": str(result.retry_after),
+                    "X-RateLimit-Policy": policy_header,
                 },
             )
 
+        REQUESTS_ALLOWED.labels(tier=tier).inc()
         response = await call_next(request)
         response.headers["X-RateLimit-Limit"] = str(result.limit)
         response.headers["X-RateLimit-Remaining"] = str(result.remaining)
         response.headers["X-RateLimit-Retry-After"] = str(result.retry_after)
+        response.headers["X-RateLimit-Policy"] = policy_header
+        if result.degraded:
+            response.headers["X-RateLimit-Degraded"] = "true"
         return response

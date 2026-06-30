@@ -28,6 +28,7 @@ class LimitResult:
     limit: int             # the limit that was applied
     remaining: int         # tokens/requests remaining in the window
     retry_after: int       # seconds until the user can retry (0 if allowed)
+    degraded: bool = False # True when Redis was unreachable (fail-open path)
 
 
 class RateLimiter(ABC):

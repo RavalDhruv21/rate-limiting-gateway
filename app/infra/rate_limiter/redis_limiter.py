@@ -15,10 +15,14 @@ Token bucket algorithm:
   Reimplemented in Lua so the check-and-update is one atomic operation.
 """
 
+import logging
+
 import redis.asyncio as aioredis
 
 from app.infra.rate_limiter.base import LimitResult, RateLimiter
 from app.utils.time import epoch_now
+
+logger = logging.getLogger(__name__)
 
 # ─── Lua script ────────────────────────────────────────────
 # This runs atomically inside Redis. The entire token bucket
@@ -132,10 +136,22 @@ class RedisRateLimiter(RateLimiter):
 
         # Execute the Lua script atomically.
         # Returns [allowed, remaining, retry_after] as integers.
-        result = await self._script(
-            keys=[key],
-            args=[capacity, refill_rate, now],
-        )
+        try:
+            result = await self._script(
+                keys=[key],
+                args=[capacity, refill_rate, now],
+            )
+        except aioredis.RedisError as exc:
+            # Fail open: if Redis is unreachable, allow the request rather
+            # than returning 500 to every user. Log a warning so ops can see it.
+            logger.warning("Redis unreachable — failing open for key=%s: %s", key, exc)
+            return LimitResult(
+                allowed=True,
+                limit=limit,
+                remaining=-1,   # -1 signals "unknown" to the middleware
+                retry_after=0,
+                degraded=True,
+            )
 
         allowed, remaining, retry_after = result
 
@@ -144,4 +160,5 @@ class RedisRateLimiter(RateLimiter):
             limit=limit,
             remaining=int(remaining),
             retry_after=int(retry_after),
+            degraded=False,
         )

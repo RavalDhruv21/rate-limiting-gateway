@@ -6,7 +6,6 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg)](https://fastapi.tiangolo.com/)
 [![Redis](https://img.shields.io/badge/Redis-7.0+-red.svg)](https://redis.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-blue.svg)](https://www.postgresql.org/)
-[![Tests](https://img.shields.io/badge/tests-23%20passing-brightgreen.svg)](#testing)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
@@ -21,10 +20,11 @@ Key infrastructure:
 - **Redis** — distributed, atomic token bucket rate limiting via Lua scripts
 - **PostgreSQL** — durable request logging with SQL querying
 - **FastAPI** — async-native web framework, ideal for I/O-bound gateway workloads
-- **Docker Compose** — one command to start the full infrastructure
+- **Docker Compose** — one command to start local infrastructure
 
->The storage layer is built behind abstract interfaces (`RateLimiter`, `LogStore`),
-making implementations swappable without touching service, middleware, or route code.
+> The storage layer is built behind abstract interfaces (`RateLimiter`, `LogStore`),
+> making implementations swappable without touching service, middleware, or route code.
+
 ---
 
 ## Architecture
@@ -38,11 +38,13 @@ making implementations swappable without touching service, middleware, or route 
             ┌────────────────────────────────────┐
             │       API Gateway (FastAPI)        │
             │                                    │
-            │   1. Request ID                    │
-            │   2. Logging (timer start)         │
-            │   3. JWT Authentication            │
-            │   4. Rate Limiter (token bucket) ──┼──► Redis
-            │   5. Proxy / Forwarder             │
+            │   1. Security Headers / CORS       │
+            │   2. Request ID                    │
+            │   3. Logging (timer start)         │
+            │   4. JWT Authentication            │
+            │   5. Rate Limiter (token bucket) ──┼──► Redis
+            │   6. Circuit Breaker               │
+            │   7. Proxy / Forwarder             │
             │                                    │
             │   Logging (fire-and-forget) ───────┼──► PostgreSQL
             └────────────────┬───────────────────┘
@@ -58,32 +60,30 @@ making implementations swappable without touching service, middleware, or route 
 
 - **JWT authentication** with tier-aware claims (`free` / `pro` / `enterprise`)
 - **Token bucket rate limiter** — allows bursts, refills continuously, atomic via Redis Lua scripts
+- **Adaptive rate limiting** — automatically halves limits when upstream error rate > 20%
+- **Circuit breaker** — opens after 5 upstream failures, fast-fails for 60s, probes on recovery
+- **Redis fail-open** — if Redis is unreachable, requests are allowed rather than returning 500
+- **Prometheus `/metrics`** — request rate, latency histograms, per-tier rate-limit counters
+- **Pre-built Grafana dashboard** — importable `grafana/dashboard.json` for zero-config observability
 - **Per-user quota overrides** — admins boost or restrict users at runtime without redeploying
 - **Fire-and-forget request logging** — DB hiccups never slow user requests
 - **Standardized error responses** — every error returns the same JSON envelope with request ID
-- **Auto-generated API docs** at `/docs` (Swagger UI)
-- **27 passing tests** — unit, concurrency, and full-stack integration
+- **IETF `X-RateLimit-Policy` header** — emerging standard rate limit header
+- **`/ready` readiness probe** — checks Redis + Postgres before accepting traffic
+- **Structured JSON logs** — parseable by Render / Grafana / ELK
 - **Alembic migrations** — proper schema management for PostgreSQL
-- **Docker Compose** — one command to start the full infrastructure
+- **Containerised** — Dockerfile + `render.yaml` for one-click Render deployment
 
 ---
 
-## How to Run
+## Local Development
 
 ### Prerequisites
 
 - **Python 3.12+** — https://www.python.org/downloads/
-- **Git** — https://git-scm.com/
 - **Docker Desktop** — https://www.docker.com/products/docker-desktop/
 
----
-
-> **Before starting the server:** open `.env` and set `JWT_SECRET` and `ADMIN_API_KEY` to random strings.
-> Generate them with: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
-
----
-
-### Quick Start (Docker Required)
+### Setup
 
 ```powershell
 git clone https://github.com/RavalDhruv21/rate-limited-gateway.git
@@ -92,32 +92,61 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 copy .env.example .env
-docker compose up -d
-python -m alembic upgrade head
+```
+
+Open `.env` and set `JWT_SECRET` and `ADMIN_API_KEY` to random strings:
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+```powershell
+docker compose up -d              # start Redis + PostgreSQL
+python -m alembic upgrade head    # create tables
 uvicorn app.main:app --reload --port 8000
 ```
 
-> **Before starting:** open `.env`, set `JWT_SECRET` and `ADMIN_API_KEY` to random strings,
-> and update the URLs to match your Docker ports:
-> ```
-> DATABASE_URL="postgresql+asyncpg://gateway_user:gateway_pass@localhost:5432/gateway_db"
-> REDIS_URL="redis://localhost:6379/0"
-> ```
-> Start Docker Desktop first and wait for it to fully load before running `docker compose up -d`.
+Open `http://localhost:8000/docs` to explore the API interactively.
 
-Server starts with:
+---
+
+## Deployment (Free — Render + Neon + Upstash)
+
+All three services are **free with no credit card required**.
+
+| Service | Role | Free tier |
+|---|---|---|
+| [Render.com](https://render.com) | App hosting | 750 hrs/mo |
+| [Neon](https://neon.tech) | PostgreSQL | 512 MB, forever free |
+| [Upstash](https://upstash.com) | Redis | 500K commands/month |
+
+### Step 1 — External services
+
+1. **Neon**: create a project → copy the `DATABASE_URL` (postgres connection string)
+2. **Upstash**: create a Redis database → copy the `REDIS_URL`
+
+### Step 2 — Deploy to Render
+
+1. Push this repo to GitHub
+2. Render → **New Web Service** → connect your repo
+3. Runtime: **Docker** (Render detects the `Dockerfile` automatically)
+4. Set environment variables in the Render dashboard:
+
 ```
-INFO: Gateway ready. Redis + PostgreSQL active.
-INFO: Application startup complete.
+DATABASE_URL   = <from Neon>
+REDIS_URL      = <from Upstash>
+APP_ENV        = production
+JWT_SECRET     = <generate: python -c "import secrets; print(secrets.token_urlsafe(32))">
+ADMIN_API_KEY  = <generate same way>
+UPSTREAM_BASE_URL = https://httpbin.org
 ```
 
-Open `http://localhost:8000/docs` in your browser to explore the API interactively.
+5. Click **Deploy** — Render runs `alembic upgrade head` then starts gunicorn automatically.
+
+Your gateway is live at `https://your-service.onrender.com`.
 
 ---
 
 ## Example Usage
-
-In a second terminal (with venv activated):
 
 ```powershell
 # Mint a JWT token
@@ -145,8 +174,11 @@ Invoke-RestMethod -Uri http://localhost:8000/admin/quota/alice -Method PUT `
     }
 }
 
-# View stats
-Invoke-RestMethod -Uri http://localhost:8000/admin/stats -Headers $adminHeaders
+# Check upstream health + adaptive rate limiting status
+Invoke-RestMethod -Uri http://localhost:8000/admin/upstream-health -Headers $adminHeaders
+
+# Prometheus metrics
+Invoke-RestMethod -Uri http://localhost:8000/metrics -Headers $adminHeaders
 ```
 
 ---
@@ -158,7 +190,8 @@ Invoke-RestMethod -Uri http://localhost:8000/admin/stats -Headers $adminHeaders
 | Method | Path | Description |
 |---|---|---|
 | GET | `/health` | Liveness probe. Returns `{"status": "ok"}`. |
-| POST | `/auth/token` | Mint a JWT (dev-only). Body: `{"user_id": "...", "tier": "free"}`. |
+| GET | `/ready` | Readiness probe. Checks Redis + Postgres. Returns 200 or 503. |
+| POST | `/auth/token` | Mint a JWT. Requires `X-Admin-Key` in production. |
 
 ### Authenticated (Requires `Authorization: Bearer <jwt>`)
 
@@ -175,14 +208,18 @@ Invoke-RestMethod -Uri http://localhost:8000/admin/stats -Headers $adminHeaders
 | DELETE | `/admin/quota/{user_id}` | Remove override (revert to tier default). |
 | GET | `/admin/logs` | Recent request logs. Params: `user_id`, `limit`. |
 | GET | `/admin/stats` | Aggregate metrics (last 24h). Param: `user_id`. |
+| GET | `/admin/upstream-health` | Upstream error rate + adaptive factor. |
+| GET | `/metrics` | Prometheus metrics (admin key required in production). |
 
 ### Response Headers
 
 | Header | Meaning |
 |---|---|
 | `X-Request-ID` | Unique request ID, propagated to logs. |
-| `X-RateLimit-Limit` | Applicable rate limit. |
+| `X-RateLimit-Limit` | Applicable rate limit (may be halved if upstream is degraded). |
 | `X-RateLimit-Remaining` | Tokens remaining in bucket. |
+| `X-RateLimit-Policy` | IETF standard: `60;w=60` = 60 req per 60s window. |
+| `X-RateLimit-Degraded` | Present (`true`) when Redis was unreachable (fail-open). |
 | `Retry-After` | (429 only) Seconds until retry. |
 
 ### Standardized Error Shape
@@ -203,6 +240,29 @@ Error codes: `UNAUTHORIZED`, `INVALID_TOKEN`, `TOKEN_EXPIRED`, `FORBIDDEN`,
 
 ---
 
+## Observability
+
+### Prometheus
+
+`GET /metrics` returns Prometheus text format. Connect any Prometheus instance to scrape it.
+
+Key metrics:
+- `http_requests_total{status, handler, method}` — request counter
+- `http_request_duration_seconds_bucket` — latency histogram (P50/P95/P99)
+- `gateway_requests_allowed_total{tier}` — allowed requests per tier
+- `gateway_requests_limited_total{tier}` — blocked requests per tier
+
+### Grafana
+
+Import `grafana/dashboard.json` into any Grafana instance (File → Import → Upload JSON).
+Select your Prometheus datasource. The dashboard immediately shows:
+- Request rate by tier
+- Rate-limited % over time
+- Upstream error rate
+- P50 / P95 / P99 latency
+
+---
+
 ## Project Structure
 
 ```
@@ -211,7 +271,8 @@ rate-limited-gateway/
 │   ├── main.py                  # FastAPI factory, middleware order, lifespan
 │   ├── dependencies.py          # DI providers — rate limiter, log store, Redis
 │   ├── core/
-│   │   ├── config.py            # Typed settings from .env
+│   │   ├── config.py            # Typed settings from .env + production validator
+│   │   ├── logging.py           # Structured JSON log formatter
 │   │   ├── security.py          # JWT encode/decode
 │   │   └── errors.py            # Exception hierarchy + error shape
 │   ├── models/
@@ -219,23 +280,44 @@ rate-limited-gateway/
 │   │   └── schemas.py           # Pydantic API contracts
 │   ├── infra/
 │   │   ├── database.py          # Async engine + session factory
+│   │   ├── circuit_breaker.py   # Async circuit breaker for upstream
 │   │   ├── rate_limiter/
 │   │   │   ├── base.py          # RateLimiter abstract interface
-│   │   │   ├── algorithms.py    # Pure token-bucket math (storage-agnostic)
-│   │   │   └── redis_limiter.py # Redis + Lua atomic implementation
+│   │   │   ├── algorithms.py    # Pure token-bucket math
+│   │   │   └── redis_limiter.py # Redis + Lua atomic implementation (fail-open)
 │   │   └── log_store/
 │   │       ├── base.py               # LogStore abstract interface
 │   │       └── postgres_log_store.py # SQLAlchemy + PostgreSQL implementation
-│   ├── services/                # Business logic
-│   ├── middleware/              # HTTP interceptors
-│   ├── routes/                  # Endpoints
+│   ├── services/
+│   │   ├── rate_limit_service.py     # Limit resolution + health factor
+│   │   ├── upstream_health.py        # Sliding-window error rate + adaptive factor
+│   │   ├── auth_service.py           # Token issuance
+│   │   └── logging_service.py        # Fire-and-forget log writes
+│   ├── middleware/
+│   │   ├── security.py          # CORS + TrustedHost + security headers
+│   │   ├── metrics.py           # Prometheus instrumentation
+│   │   ├── auth.py              # JWT validation
+│   │   ├── rate_limit.py        # Rate limit enforcement + IETF headers
+│   │   ├── logging.py           # Request logging
+│   │   └── request_id.py        # Request ID assignment
+│   ├── routes/
+│   │   ├── health.py            # /health + /ready
+│   │   ├── auth.py              # /auth/token
+│   │   ├── admin.py             # /admin/* endpoints
+│   │   └── proxy.py             # Catch-all proxy with circuit breaker
 │   └── utils/
+│       └── time.py
+├── grafana/
+│   └── dashboard.json           # Importable Grafana dashboard
 ├── migrations/                  # Alembic schema migrations
-├── tests/                       # 27 tests: unit, concurrency, integration
+├── tests/                       # Unit + integration tests
 ├── scripts/
+│   ├── start.sh                 # Production entrypoint (migrations → gunicorn)
 │   ├── init_db.py               # CLI: initialize database
 │   └── generate_token.py        # CLI: mint a JWT for testing
-├── docker-compose.yml           # Redis + PostgreSQL services
+├── Dockerfile                   # Multi-stage production image
+├── docker-compose.yml           # Local Redis + PostgreSQL
+├── render.yaml                  # Render.com deployment blueprint
 ├── .env.example                 # Environment variable template
 └── pyproject.toml               # Dependencies + tool config
 ```
@@ -249,25 +331,13 @@ pytest -v
 pytest --cov=app --cov-report=term-missing
 ```
 
-Tests require running Redis and PostgreSQL (the same `docker compose up -d` used for dev).
-Each test gets a clean slate: Postgres tables are created/dropped per test, and the Redis DB is flushed between tests.
+Tests require running Redis and PostgreSQL (`docker compose up -d`).
+Each test gets a clean slate: Postgres tables are created/dropped per test,
+and the Redis DB is flushed between tests.
 
-Three levels covered:
-
+Levels covered:
 - **Unit** — token bucket math, JWT primitives. Milliseconds per test.
 - **Integration** — full HTTP stack via httpx ASGI transport. Verifies middleware ordering, error shapes, and the 429-not-500 regression.
-
----
-
-## Future Work
-
-- Sliding window algorithm alongside token bucket, selectable per endpoint
-- Per-endpoint rate limits with different quotas per upstream path
-- API key authentication as alternative to JWT
-- Prometheus `/metrics` endpoint for observability
-- Circuit breaker around upstream proxy
-- Response caching for idempotent GETs
-- Natural language admin interface via LLM integration
 
 ---
 

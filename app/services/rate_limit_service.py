@@ -3,6 +3,7 @@ Rate limiting business logic.
 
 The middleware delegates to this service:
   - service decides WHICH limit applies (tier default or admin override)
+  - service applies the upstream health factor (adaptive rate limiting)
   - service calls the rate limiter to check
   - service returns the LimitResult
 
@@ -12,7 +13,6 @@ Keeping policy in a service (not middleware) means:
     usage could call the same service).
 """
 
-from datetime import datetime
 from typing import Literal
 
 from sqlalchemy import select
@@ -26,7 +26,6 @@ from app.utils.time import utc_now
 Tier = Literal["free", "pro", "enterprise"]
 
 # Window we apply rate limits over. 60 seconds = per-minute limits.
-# Pulled out as a constant so a future config change is one place.
 _WINDOW_SECONDS = 60
 
 
@@ -38,8 +37,6 @@ def _tier_default(tier: Tier) -> int:
         return settings.rate_limit_pro
     if tier == "enterprise":
         return settings.rate_limit_enterprise
-    # Defensive: if a future tier sneaks in without a config entry,
-    # default to the lowest rather than crashing or being too permissive.
     return settings.rate_limit_free
 
 
@@ -60,7 +57,6 @@ async def _lookup_override(
     if override is None:
         return None
 
-    # Expired override is treated as no override.
     if override.expires_at is not None and override.expires_at < utc_now():
         return None
 
@@ -73,7 +69,7 @@ async def resolve_limit(
     tier: Tier,
 ) -> int:
     """
-    Decide the rate limit (requests/minute) for a user.
+    Decide the base rate limit (requests/minute) for a user.
 
     Resolution order:
       1. Admin override, if active.
@@ -90,13 +86,19 @@ async def check_rate_limit(
     db: AsyncSession,
     user_id: str,
     tier: Tier,
+    health_factor: float = 1.0,
 ) -> LimitResult:
     """
     Top-level entry point used by the middleware.
 
-    Resolves the applicable limit, then asks the limiter whether
-    this request is allowed.
+    Resolves the applicable limit, applies the upstream health factor
+    (adaptive rate limiting), then asks the limiter whether this request
+    is allowed.
+
+    health_factor: 1.0 = upstream healthy, 0.5 = upstream degraded.
+    When degraded, effective limits are halved to protect the upstream.
     """
-    limit = await resolve_limit(db, user_id, tier)
+    base_limit = await resolve_limit(db, user_id, tier)
+    effective_limit = max(1, int(base_limit * health_factor))
     key = f"user:{user_id}"
-    return await limiter.check(key, limit, _WINDOW_SECONDS)
+    return await limiter.check(key, effective_limit, _WINDOW_SECONDS)

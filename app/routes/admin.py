@@ -6,11 +6,12 @@ require_admin dependency). They are NOT subject to JWT auth or
 rate limiting (see PUBLIC_PATH_PREFIXES in the middleware).
 
 Capabilities:
-  - PUT  /admin/quota/{user_id}      — set or update a user's quota override
-  - GET  /admin/quota/{user_id}      — view current override
-  - DELETE /admin/quota/{user_id}    — remove override (revert to tier default)
-  - GET  /admin/logs                 — recent requests, optionally filtered by user
-  - GET  /admin/stats                — aggregate metrics
+  - PUT    /admin/quota/{user_id}      — set or update a user's quota override
+  - GET    /admin/quota/{user_id}      — view current override
+  - DELETE /admin/quota/{user_id}      — remove override (revert to tier default)
+  - GET    /admin/logs                 — recent requests, optionally filtered by user
+  - GET    /admin/stats                — aggregate metrics
+  - GET    /admin/upstream-health      — upstream error rate + adaptive factor
 """
 
 from fastapi import APIRouter, Query, status
@@ -100,9 +101,6 @@ async def list_logs(
 ) -> list[RequestLogResponse]:
     """Recent request logs, newest-first, optionally filtered by user."""
     entries = await store.query(user_id=user_id, limit=limit)
-    # Map LogEntry → RequestLogResponse. created_at isn't in LogEntry
-    # (the transport object) so extend LogEntry if you need it in the
-    # response — for now we omit it and keep LogEntry minimal.
     return [
         RequestLogResponse(
             request_id=e.request_id,
@@ -113,8 +111,6 @@ async def list_logs(
             latency_ms=e.latency_ms,
             rate_limited=e.rate_limited,
             ip=e.ip,
-            # Placeholder — see comment above. In v2, surface real
-            # created_at via the LogStore interface.
             created_at="1970-01-01T00:00:00+00:00",  # type: ignore[arg-type]
         )
         for e in entries
@@ -135,3 +131,20 @@ async def get_stats(
         period_start=s.period_start,
         period_end=s.period_end,
     )
+
+
+# ─── Upstream health ───────────────────────────────────────
+
+@router.get("/upstream-health")
+async def upstream_health() -> dict:
+    """
+    Upstream error rate and adaptive rate-limiting factor.
+
+    When error_rate > 20%, the gateway halves effective rate limits
+    to protect the upstream from being flooded while it recovers.
+    """
+    from app.dependencies import get_redis_client
+    from app.services.upstream_health import get_health_status
+
+    redis = get_redis_client()
+    return await get_health_status(redis)
