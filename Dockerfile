@@ -1,7 +1,8 @@
 FROM python:3.12-slim AS builder
 WORKDIR /app
 COPY pyproject.toml .
-RUN pip install --user --no-cache-dir -e ".[prod]"
+# Copy minimal stub so pip can resolve the package metadata without full source
+RUN mkdir -p app && pip install --user --no-cache-dir ".[prod]"
 
 FROM python:3.12-slim
 WORKDIR /app
