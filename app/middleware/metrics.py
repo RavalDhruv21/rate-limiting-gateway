@@ -42,19 +42,17 @@ def setup_metrics(app) -> None:
     Call once inside create_app() after routes are registered.
     The /metrics route is added here; it returns Prometheus text format.
     """
-    from app.dependencies import AdminAuthDep  # local import avoids circular
-
     instrumentator = Instrumentator(
         should_group_status_codes=True,
         excluded_handlers=["/metrics", "/health", "/ready"],
     )
     instrumentator.instrument(app)
 
-    # Expose /metrics. In production the endpoint is protected by admin key;
-    # in development it's open so you can curl it locally.
     from app.core.config import settings
 
     if settings.app_env == "production":
-        instrumentator.expose(app, endpoint="/metrics", dependencies=[AdminAuthDep])
+        from fastapi import Depends
+        from app.dependencies import require_admin
+        instrumentator.expose(app, endpoint="/metrics", dependencies=[Depends(require_admin)])
     else:
         instrumentator.expose(app, endpoint="/metrics")
