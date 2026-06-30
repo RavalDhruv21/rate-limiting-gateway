@@ -23,7 +23,7 @@ from app.core.security import decode_access_token
 # /auth/* — can't have a token before you've minted one.
 # /admin/* — uses X-Admin-Key via Depends, not JWT.
 # /health  — health checks should never require auth.
-PUBLIC_PATH_PREFIXES = ("/auth", "/admin", "/health", "/docs", "/openapi.json", "/redoc")
+PUBLIC_PATH_PREFIXES = ("/auth", "/admin", "/health", "/ready", "/metrics", "/docs", "/openapi.json", "/redoc")
 
 
 def _auth_failure_response(request: Request, exc: AuthError) -> JSONResponse:
