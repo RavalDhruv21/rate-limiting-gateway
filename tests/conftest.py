@@ -34,7 +34,10 @@ async def test_engine():
     Create all tables in the configured Postgres database before each test
     and drop them after. scope="function" keeps tests fully independent.
     """
-    engine = create_async_engine(settings.database_url, echo=False)
+    from app.infra.database import _build_engine_kwargs
+    url, kwargs = _build_engine_kwargs(settings.database_url)
+    kwargs.pop("echo", None)
+    engine = create_async_engine(url, echo=False, **kwargs)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield engine
